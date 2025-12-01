@@ -1,0 +1,72 @@
+set_target_temperature:
+  name: Set Target Temperature
+  description: Set the target temperature for a zone
+  fields:
+    zone:
+      name: Zone
+      description: Which zone to set (zone1 or zone2)
+      required: true
+      example: "zone1"
+      selector:
+        select:
+          options:
+            - "zone1"
+            - "zone2"
+    temperature:
+      name: Temperature
+      description: Target temperature in degrees
+      required: true
+      example: 72
+      selector:
+        number:
+          min: 50
+          max: 90
+          step: 0.5
+          unit_of_measurement: "°F"
+
+set_nominal_fan_speed:
+  name: Set Nominal Fan Speed
+  description: Set the nominal fan speed for a zone (controller will boost to high or reduce to quiet as needed)
+  fields:
+    zone:
+      name: Zone
+      description: Which zone to set (zone1 or zone2)
+      required: true
+      example: "zone1"
+      selector:
+        select:
+          options:
+            - "zone1"
+            - "zone2"
+    fan_speed:
+      name: Fan Speed
+      description: Nominal fan speed (will be boosted or reduced automatically based on conditions)
+      required: true
+      example: "medium"
+      selector:
+        select:
+          options:
+            - "quiet"
+            - "low"
+            - "medium"
+            - "high"
+
+set_enable:
+  name: Enable/Disable Controller
+  description: Enable or disable the dual zone HVAC controller
+  fields:
+    enabled:
+      name: Enabled
+      description: Whether the controller should be enabled
+      required: true
+      example: true
+      selector:
+        boolean:
+
+reset_learning:
+  name: Reset Learning
+  description: Reset all learned heating, cooling, and leakage rates
+
+get_state:
+  name: Get Controller State
+  description: Get the current state of the controller (for internal use)

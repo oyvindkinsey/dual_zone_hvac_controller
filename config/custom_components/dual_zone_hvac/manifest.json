@@ -1,0 +1,9 @@
+{
+  "domain": "dual_zone_hvac",
+  "name": "Dual Zone HVAC Controller",
+  "documentation": "https://github.com/oyvindkinsey/dual_zone_hvac",
+  "requirements": [],
+  "codeowners": ["@oyvindkinsey"],
+  "version": "1.0.0",
+  "iot_class": "local_polling"
+}
