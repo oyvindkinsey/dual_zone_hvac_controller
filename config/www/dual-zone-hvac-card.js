@@ -348,15 +348,15 @@ class DualZoneHVACCard extends HTMLElement {
           </div>
           <div class="controls">
             ${this._enabled ? `
-              <button class="button button-disable" @click="${() => this._toggleEnable(false)}">
+              <button class="button button-disable">
                 Disable
               </button>
             ` : `
-              <button class="button button-enable" @click="${() => this._toggleEnable(true)}">
+              <button class="button button-enable">
                 Enable
               </button>
             `}
-            <button class="button button-reset" @click="${() => this._resetLearning()}">
+            <button class="button button-reset">
               Reset
             </button>
           </div>
@@ -503,9 +503,10 @@ class DualZoneHVACCard extends HTMLElement {
     // Quick temp buttons
     this.shadowRoot.querySelectorAll('.temp-button').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const zone = e.target.dataset.zone;
-        const temp = parseFloat(e.target.dataset.temp);
-        
+        e.stopPropagation();
+        const zone = e.currentTarget.dataset.zone;
+        const temp = parseFloat(e.currentTarget.dataset.temp);
+
         if (zone === '1') {
           this._zone1Target = temp;
           this._callService('set_target_temperature', {
@@ -519,7 +520,7 @@ class DualZoneHVACCard extends HTMLElement {
             temperature: temp
           });
         }
-        
+
         this._updateCard();
       });
     });
@@ -527,9 +528,10 @@ class DualZoneHVACCard extends HTMLElement {
     // Fan speed buttons
     this.shadowRoot.querySelectorAll('.fan-button').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const zone = e.target.dataset.zone;
-        const fanSpeed = e.target.dataset.fan;
-        
+        e.stopPropagation();
+        const zone = e.currentTarget.dataset.zone;
+        const fanSpeed = e.currentTarget.dataset.fan;
+
         if (zone === '1') {
           this._zone1MaxFan = fanSpeed;
           this._callService('set_nominal_fan_speed', {
@@ -543,21 +545,36 @@ class DualZoneHVACCard extends HTMLElement {
             fan_speed: fanSpeed
           });
         }
-        
+
         this._updateCard();
       });
     });
 
     // Control buttons
-    this.shadowRoot.querySelectorAll('.button-enable, .button-disable').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-      });
-    });
+    const enableBtn = this.shadowRoot.querySelector('.button-enable');
+    const disableBtn = this.shadowRoot.querySelector('.button-disable');
+    const resetBtn = this.shadowRoot.querySelector('.button-reset');
 
-    this.shadowRoot.querySelector('.button-reset')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
+    if (enableBtn) {
+      enableBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleEnable(true);
+      });
+    }
+
+    if (disableBtn) {
+      disableBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleEnable(false);
+      });
+    }
+
+    if (resetBtn) {
+      resetBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._resetLearning();
+      });
+    }
   }
 
   _toggleEnable(enabled) {
