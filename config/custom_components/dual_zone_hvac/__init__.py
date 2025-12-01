@@ -115,6 +115,8 @@ CONF_MIN_OFFSET = "min_offset"
 CONF_CONFLICT_THRESHOLD = "conflict_threshold"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_MAX_STARTS_PER_HOUR = "max_starts_per_hour"
+CONF_MIN_COMPRESSOR_RUNTIME = "min_compressor_runtime"
+CONF_MIN_COMPRESSOR_OFF_TIME = "min_compressor_off_time"
 
 # Default values
 DEFAULT_DEADBAND = 0.5
@@ -123,6 +125,8 @@ DEFAULT_CONFLICT_THRESHOLD = 2.0
 DEFAULT_UPDATE_INTERVAL = 60
 DEFAULT_NOMINAL_FAN_SPEED = "medium"
 DEFAULT_MAX_STARTS_PER_HOUR = 3
+DEFAULT_MIN_COMPRESSOR_RUNTIME = 180  # 3 minutes in seconds
+DEFAULT_MIN_COMPRESSOR_OFF_TIME = 180  # 3 minutes in seconds
 
 # Service names
 SERVICE_SET_TARGET_TEMPERATURE = "set_target_temperature"
@@ -154,6 +158,8 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional(CONF_CONFLICT_THRESHOLD, default=DEFAULT_CONFLICT_THRESHOLD): vol.Coerce(float),
     vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): vol.Coerce(int),
     vol.Optional(CONF_MAX_STARTS_PER_HOUR, default=DEFAULT_MAX_STARTS_PER_HOUR): vol.Coerce(int),
+    vol.Optional(CONF_MIN_COMPRESSOR_RUNTIME, default=DEFAULT_MIN_COMPRESSOR_RUNTIME): vol.Coerce(int),
+    vol.Optional(CONF_MIN_COMPRESSOR_OFF_TIME, default=DEFAULT_MIN_COMPRESSOR_OFF_TIME): vol.Coerce(int),
 })
 
 CONFIG_SCHEMA = vol.Schema({
@@ -190,6 +196,8 @@ class DualZoneHVACController:
         self.conflict_threshold = settings.get(CONF_CONFLICT_THRESHOLD, DEFAULT_CONFLICT_THRESHOLD)
         self.update_interval = settings.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         self.max_starts_per_hour = settings.get(CONF_MAX_STARTS_PER_HOUR, DEFAULT_MAX_STARTS_PER_HOUR)
+        self.min_compressor_runtime = settings.get(CONF_MIN_COMPRESSOR_RUNTIME, DEFAULT_MIN_COMPRESSOR_RUNTIME)
+        self.min_compressor_off_time = settings.get(CONF_MIN_COMPRESSOR_OFF_TIME, DEFAULT_MIN_COMPRESSOR_OFF_TIME)
         
         # Zone configuration
         zone1_config = config[CONF_ZONE1]
@@ -227,6 +235,8 @@ class DualZoneHVACController:
         # Compressor start tracking for short-cycle prevention
         self.compressor_start_times = deque(maxlen=20)  # Keep last 20 starts
         self.compressor_running = False
+        self.compressor_last_start_time = None
+        self.compressor_last_stop_time = None
     
     async def async_setup(self):
         """Set up the controller"""
@@ -732,6 +742,50 @@ class DualZoneHVACController:
         """Check if compressor is running (either zone in heat/cool)"""
         return mode1 in ['heat', 'cool'] or mode2 in ['heat', 'cool']
 
+    def enforce_minimum_runtime(self, mode1: Mode, mode2: Mode) -> tuple[Mode, Mode]:
+        """
+        Enforce 3-minute rule: minimum runtime and minimum off-time
+
+        Returns modified modes that comply with timing constraints
+        """
+        now = time.time()
+
+        # Check if desired modes would start the compressor
+        would_start = self.is_compressor_running(mode1, mode2) and not self.compressor_running
+
+        # Check if desired modes would stop the compressor
+        would_stop = not self.is_compressor_running(mode1, mode2) and self.compressor_running
+
+        # Minimum off-time: prevent starting if we haven't been off long enough
+        if would_start and self.compressor_last_stop_time is not None:
+            off_time = now - self.compressor_last_stop_time
+            if off_time < self.min_compressor_off_time:
+                remaining = self.min_compressor_off_time - off_time
+                _LOGGER.warning(
+                    f"MINIMUM OFF-TIME: Preventing compressor start. "
+                    f"Off for {off_time:.0f}s, need {self.min_compressor_off_time}s. "
+                    f"Waiting {remaining:.0f}s more."
+                )
+                # Keep both zones in fan_only to prevent start
+                return 'fan_only', 'fan_only'
+
+        # Minimum runtime: prevent stopping if we haven't run long enough
+        if would_stop and self.compressor_last_start_time is not None:
+            runtime = now - self.compressor_last_start_time
+            if runtime < self.min_compressor_runtime:
+                remaining = self.min_compressor_runtime - runtime
+                _LOGGER.warning(
+                    f"MINIMUM RUNTIME: Preventing compressor stop. "
+                    f"Running for {runtime:.0f}s, need {self.min_compressor_runtime}s. "
+                    f"Continuing for {remaining:.0f}s more."
+                )
+                # Keep at least one zone in heat/cool to maintain compressor running
+                # Prefer to keep the zone with larger error in conditioning mode
+                return mode1, mode2  # Return original modes that would keep running
+
+        # No timing constraints violated
+        return mode1, mode2
+
     def modes_conflict(self, mode1: Mode, mode2: Mode) -> bool:
         """Check if two modes conflict"""
         return (mode1 == 'heat' and mode2 == 'cool') or (mode1 == 'cool' and mode2 == 'heat')
@@ -974,6 +1028,9 @@ class DualZoneHVACController:
                 internal_setpoint2 = target2
                 _LOGGER.debug(f"No compensation needed - modes: {mode1}, {mode2}")
 
+            # Enforce 3-minute rule: minimum runtime and off-time
+            mode1, mode2 = self.enforce_minimum_runtime(mode1, mode2)
+
             # Determine which zone is lead (will reach target first)
             is_lead_zone1 = False
             is_lead_zone2 = False
@@ -1033,14 +1090,22 @@ class DualZoneHVACController:
             new_compressor_state = self.is_compressor_running(mode1, mode2)
             if new_compressor_state and not self.compressor_running:
                 # Compressor just started
-                self.compressor_start_times.append(time.time())
+                start_time = time.time()
+                self.compressor_start_times.append(start_time)
+                self.compressor_last_start_time = start_time
                 recent_starts = self.count_recent_starts()
                 _LOGGER.warning(
                     f"COMPRESSOR START detected. Total starts in last hour: {recent_starts}"
                 )
             elif not new_compressor_state and self.compressor_running:
                 # Compressor just stopped
-                _LOGGER.info("Compressor stopped")
+                stop_time = time.time()
+                self.compressor_last_stop_time = stop_time
+                if self.compressor_last_start_time:
+                    runtime = stop_time - self.compressor_last_start_time
+                    _LOGGER.info(f"Compressor stopped after {runtime:.0f}s runtime")
+                else:
+                    _LOGGER.info("Compressor stopped")
 
             self.compressor_running = new_compressor_state
 
