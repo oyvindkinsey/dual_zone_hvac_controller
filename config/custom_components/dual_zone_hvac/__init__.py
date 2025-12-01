@@ -70,6 +70,7 @@ TROUBLESHOOTING:
 
 import logging
 import asyncio
+import time
 from datetime import timedelta
 from typing import Dict, Optional, Literal
 from collections import deque
@@ -113,6 +114,7 @@ CONF_DEADBAND = "deadband"
 CONF_MIN_OFFSET = "min_offset"
 CONF_CONFLICT_THRESHOLD = "conflict_threshold"
 CONF_UPDATE_INTERVAL = "update_interval"
+CONF_MAX_STARTS_PER_HOUR = "max_starts_per_hour"
 
 # Default values
 DEFAULT_DEADBAND = 0.5
@@ -120,6 +122,7 @@ DEFAULT_MIN_OFFSET = 0.3
 DEFAULT_CONFLICT_THRESHOLD = 2.0
 DEFAULT_UPDATE_INTERVAL = 60
 DEFAULT_NOMINAL_FAN_SPEED = "medium"
+DEFAULT_MAX_STARTS_PER_HOUR = 3
 
 # Service names
 SERVICE_SET_TARGET_TEMPERATURE = "set_target_temperature"
@@ -150,6 +153,7 @@ SETTINGS_SCHEMA = vol.Schema({
     vol.Optional(CONF_MIN_OFFSET, default=DEFAULT_MIN_OFFSET): vol.Coerce(float),
     vol.Optional(CONF_CONFLICT_THRESHOLD, default=DEFAULT_CONFLICT_THRESHOLD): vol.Coerce(float),
     vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): vol.Coerce(int),
+    vol.Optional(CONF_MAX_STARTS_PER_HOUR, default=DEFAULT_MAX_STARTS_PER_HOUR): vol.Coerce(int),
 })
 
 CONFIG_SCHEMA = vol.Schema({
@@ -185,6 +189,7 @@ class DualZoneHVACController:
         self.min_offset = settings.get(CONF_MIN_OFFSET, DEFAULT_MIN_OFFSET)
         self.conflict_threshold = settings.get(CONF_CONFLICT_THRESHOLD, DEFAULT_CONFLICT_THRESHOLD)
         self.update_interval = settings.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        self.max_starts_per_hour = settings.get(CONF_MAX_STARTS_PER_HOUR, DEFAULT_MAX_STARTS_PER_HOUR)
         
         # Zone configuration
         zone1_config = config[CONF_ZONE1]
@@ -218,6 +223,10 @@ class DualZoneHVACController:
         self.enabled = True
         self.iteration_count = 0
         self._cancel_interval = None
+
+        # Compressor start tracking for short-cycle prevention
+        self.compressor_start_times = deque(maxlen=20)  # Keep last 20 starts
+        self.compressor_running = False
     
     async def async_setup(self):
         """Set up the controller"""
@@ -321,7 +330,17 @@ class DualZoneHVACController:
                 # Load enabled state
                 if 'enabled' in data:
                     self.enabled = data['enabled']
-                
+
+                # Load compressor start times (filter to keep only last hour)
+                if 'compressor_start_times' in data:
+                    now = time.time()
+                    cutoff = now - 3600  # Only keep starts from last hour
+                    self.compressor_start_times = deque(
+                        (t for t in data['compressor_start_times'] if t > cutoff),
+                        maxlen=20
+                    )
+                    _LOGGER.info(f"Loaded {len(self.compressor_start_times)} compressor starts from last hour")
+
                 _LOGGER.info(f"Loaded persisted state: Z1={self.zones['zone1'].target_setpoint}°F (fan:{self.zones['zone1'].nominal_fan_speed}), Z2={self.zones['zone2'].target_setpoint}°F (fan:{self.zones['zone2'].nominal_fan_speed})")
         except Exception as e:
             _LOGGER.warning(f"Could not load persisted state: {e}")
@@ -343,6 +362,7 @@ class DualZoneHVACController:
                 'cooling_rate': self.cooling_rate,
                 'leakage_rate': self.leakage_rate,
                 'enabled': self.enabled,
+                'compressor_start_times': list(self.compressor_start_times),
             }
             await store.async_save(data)
             _LOGGER.debug("Saved controller state")
@@ -672,18 +692,46 @@ class DualZoneHVACController:
         
         return nominal_speed
     
-    def determine_desired_mode(self, current_temp: float, target_temp: float) -> Mode:
+    def determine_desired_mode(self, current_temp: float, target_temp: float, deadband_override: float = None) -> Mode:
         """Determine what mode is needed based on current vs target temperature"""
+        deadband = deadband_override if deadband_override is not None else self.deadband
         error = target_temp - current_temp
-        
-        if abs(error) <= self.deadband:
+
+        if abs(error) <= deadband:
             return 'fan_only'
-        elif error > self.deadband:
+        elif error > deadband:
             return 'heat'
-        elif error < -self.deadband:
+        elif error < -deadband:
             return 'cool'
         return 'fan_only'
-    
+
+    def count_recent_starts(self) -> int:
+        """Count compressor starts in the last hour"""
+        now = time.time()
+        cutoff = now - 3600  # 60 minutes ago
+        return sum(1 for t in self.compressor_start_times if t > cutoff)
+
+    def get_dynamic_deadband(self) -> float:
+        """Calculate deadband based on recent compressor starts to prevent short cycling"""
+        recent_starts = self.count_recent_starts()
+
+        if recent_starts >= self.max_starts_per_hour:
+            # At or over limit - expand deadband to prevent another start
+            expansion_factor = 3.0
+            expanded_deadband = self.deadband * expansion_factor
+            _LOGGER.warning(
+                f"Compressor start limit reached ({recent_starts} starts in last hour, "
+                f"limit={self.max_starts_per_hour}). Expanding deadband from "
+                f"{self.deadband:.1f}°F to {expanded_deadband:.1f}°F to prevent short cycling."
+            )
+            return expanded_deadband
+
+        return self.deadband
+
+    def is_compressor_running(self, mode1: Mode, mode2: Mode) -> bool:
+        """Check if compressor is running (either zone in heat/cool)"""
+        return mode1 in ['heat', 'cool'] or mode2 in ['heat', 'cool']
+
     def modes_conflict(self, mode1: Mode, mode2: Mode) -> bool:
         """Check if two modes conflict"""
         return (mode1 == 'heat' and mode2 == 'cool') or (mode1 == 'cool' and mode2 == 'heat')
@@ -840,14 +888,19 @@ class DualZoneHVACController:
             # Update histories
             self.update_temperature_history('zone1', t1, current_mode1)
             self.update_temperature_history('zone2', t2, current_mode2)
-            
-            # Determine desired modes
-            desired_mode1 = self.determine_desired_mode(t1, target1)
-            desired_mode2 = self.determine_desired_mode(t2, target2)
-            
+
+            # Get dynamic deadband for short-cycle prevention
+            dynamic_deadband = self.get_dynamic_deadband()
+            if dynamic_deadband != self.deadband:
+                _LOGGER.debug(f"Using dynamic deadband: {dynamic_deadband:.1f}°F (normal: {self.deadband:.1f}°F)")
+
+            # Determine desired modes using dynamic deadband
+            desired_mode1 = self.determine_desired_mode(t1, target1, dynamic_deadband)
+            desired_mode2 = self.determine_desired_mode(t2, target2, dynamic_deadband)
+
             error1 = target1 - t1
             error2 = target2 - t2
-            
+
             _LOGGER.debug(f"Temperature errors: Zone1={error1:.2f}°F, Zone2={error2:.2f}°F")
             _LOGGER.debug(f"Desired modes: Zone1={desired_mode1}, Zone2={desired_mode2}")
             
@@ -975,7 +1028,22 @@ class DualZoneHVACController:
             # Update state
             self.zones['zone1'].last_mode = mode1
             self.zones['zone2'].last_mode = mode2
-            
+
+            # Track compressor starts for short-cycle prevention
+            new_compressor_state = self.is_compressor_running(mode1, mode2)
+            if new_compressor_state and not self.compressor_running:
+                # Compressor just started
+                self.compressor_start_times.append(time.time())
+                recent_starts = self.count_recent_starts()
+                _LOGGER.warning(
+                    f"COMPRESSOR START detected. Total starts in last hour: {recent_starts}"
+                )
+            elif not new_compressor_state and self.compressor_running:
+                # Compressor just stopped
+                _LOGGER.info("Compressor stopped")
+
+            self.compressor_running = new_compressor_state
+
             # Log status summary every cycle
             _LOGGER.info(
                 f"STATUS: Z1[{t1:.1f}°F->{internal_setpoint1:.1f}°F ({mode1})] Z2[{t2:.1f}°F->{internal_setpoint2:.1f}°F ({mode2})] | "
