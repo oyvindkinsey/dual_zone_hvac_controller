@@ -585,26 +585,34 @@ class DualZoneHVACController:
             except Exception as e:
                 _LOGGER.error(f"Failed to set fan mode for {entity_id}: {e}", exc_info=True)
     
-    def calculate_optimal_fan_speed(self, zone: str, mode: Mode, 
-                                    temp_error: float, is_lead: bool) -> FanSpeed:
+    def calculate_optimal_fan_speed(self, zone: str, mode: Mode,
+                                    temp_error: float, is_lead: bool, other_zone_mode: Mode = 'off') -> FanSpeed:
         """
         Calculate optimal fan speed based on mode and conditions
-        
+
         Args:
             zone: Zone identifier
             mode: Current HVAC mode
             temp_error: Absolute temperature error from target
             is_lead: Whether this zone will reach target first
-        
+            other_zone_mode: The other zone's current mode (to detect leakage scenarios)
+
         Returns:
             Optimal fan speed
         """
         nominal_speed = self.zones[zone].nominal_fan_speed
         nominal_level = FAN_SPEED_LEVELS[nominal_speed]
-        
-        # Fan only mode - always use quiet to minimize leakage
+
+        # Fan only mode - behavior depends on whether other zone is actively conditioning
         if mode == 'fan_only':
-            return 'quiet'
+            # If other zone is actively heating/cooling, use quiet to minimize leakage impact
+            if other_zone_mode in ['heat', 'cool']:
+                _LOGGER.debug(f"{zone}: fan_only with other zone {other_zone_mode} - using quiet to minimize leakage")
+                return 'quiet'
+            # If other zone is also fan_only/off, no leakage concern - use nominal for circulation
+            else:
+                _LOGGER.debug(f"{zone}: fan_only with other zone {other_zone_mode} - using nominal for circulation")
+                return nominal_speed
         
         # Off mode - quiet fan
         if mode == 'off':
@@ -934,14 +942,14 @@ class DualZoneHVACController:
                 is_lead_zone2 = True
                 _LOGGER.debug("Zone2 is lead zone (only active zone)")
 
-            # Calculate optimal fan speeds based on mode, error, and lead/lag status
+            # Calculate optimal fan speeds based on mode, error, lead/lag status, and other zone's mode
             error1_abs = abs(target1 - t1)
             error2_abs = abs(target2 - t2)
 
-            fan_speed1 = self.calculate_optimal_fan_speed('zone1', mode1, error1_abs, is_lead_zone1)
-            fan_speed2 = self.calculate_optimal_fan_speed('zone2', mode2, error2_abs, is_lead_zone2)
+            fan_speed1 = self.calculate_optimal_fan_speed('zone1', mode1, error1_abs, is_lead_zone1, mode2)
+            fan_speed2 = self.calculate_optimal_fan_speed('zone2', mode2, error2_abs, is_lead_zone2, mode1)
 
-            _LOGGER.debug(f"Calculated fan speeds: Zone1={fan_speed1} (lead={is_lead_zone1}, error={error1_abs:.1f}°F), Zone2={fan_speed2} (lead={is_lead_zone2}, error={error2_abs:.1f}°F)")
+            _LOGGER.debug(f"Calculated fan speeds: Zone1={fan_speed1} (lead={is_lead_zone1}, error={error1_abs:.1f}°F, other_mode={mode2}), Zone2={fan_speed2} (lead={is_lead_zone2}, error={error2_abs:.1f}°F, other_mode={mode1})")
 
             # Apply control actions
             ha_mode1 = self._internal_mode_to_ha(mode1)
