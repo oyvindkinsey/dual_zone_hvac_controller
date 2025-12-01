@@ -266,16 +266,19 @@ class DualZoneHVACController:
             self.async_get_state,
         )
         
-        # Start the control loop
+        # Create sensor entities to expose state
+        await self._create_sensors()
+
+        # Run control loop immediately on startup
+        await self.async_control_loop()
+
+        # Start the periodic control loop
         self._cancel_interval = async_track_time_interval(
             self.hass,
             self.async_control_loop,
             timedelta(seconds=self.update_interval)
         )
-        
-        # Create sensor entities to expose state
-        await self._create_sensors()
-        
+
         _LOGGER.info("Dual Zone HVAC Controller initialized")
         _LOGGER.info(f"Zone 1: {self.zones['zone1'].climate_entity} -> {self.zones['zone1'].target_setpoint}°F")
         _LOGGER.info(f"Zone 2: {self.zones['zone2'].climate_entity} -> {self.zones['zone2'].target_setpoint}°F")
