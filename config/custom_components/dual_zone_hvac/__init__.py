@@ -545,7 +545,7 @@ class DualZoneHVACController:
             current_fan_mode = state.attributes.get('fan_mode')
             _LOGGER.debug(f"{entity_id} current fan_mode: {current_fan_mode}")
         
-        # Set HVAC mode if specified
+        # Set HVAC mode if specified (blocking to ensure it completes before fan mode change)
         if mode is not None:
             await self.hass.services.async_call(
                 'climate',
@@ -554,8 +554,10 @@ class DualZoneHVACController:
                     'entity_id': entity_id,
                     'hvac_mode': mode,
                 },
-                blocking=False
+                blocking=True
             )
+            # Small delay to allow mode change to fully propagate
+            await asyncio.sleep(0.2)
         
         # Set fan mode if specified
         # The climate entity expects: 'low', 'medium', 'high', 'quiet' (all lowercase)
@@ -572,14 +574,14 @@ class DualZoneHVACController:
                     blocking=True  # Wait for the call to complete
                 )
                 
-                # Check if it actually changed
-                await asyncio.sleep(0.5)  # Give it a moment
+                # Check if it actually changed (give more time for state to update)
+                await asyncio.sleep(1.0)  # Wait for state to propagate
                 state_after = self.hass.states.get(entity_id)
                 if state_after:
                     new_fan_mode = state_after.attributes.get('fan_mode')
                     _LOGGER.info(f"{entity_id} fan_mode after call: {new_fan_mode} (requested: {fan_speed})")
                     if new_fan_mode != fan_speed:
-                        _LOGGER.warning(f"{entity_id} fan mode did not change as expected!")
+                        _LOGGER.warning(f"{entity_id} fan mode did not change as expected! Current mode: {state_after.state}")
             except Exception as e:
                 _LOGGER.error(f"Failed to set fan mode for {entity_id}: {e}", exc_info=True)
     
