@@ -95,6 +95,7 @@ from homeassistant.const import (
 HVAC_MODE_HEAT = HVACMode.HEAT
 HVAC_MODE_COOL = HVACMode.COOL
 HVAC_MODE_HEAT_COOL = HVACMode.HEAT_COOL
+HVAC_MODE_DRY = HVACMode.DRY
 HVAC_MODE_FAN_ONLY = HVACMode.FAN_ONLY
 HVAC_MODE_OFF = HVACMode.OFF
 
@@ -137,7 +138,7 @@ SERVICE_SET_ENABLE = "set_enable"
 SERVICE_RESET_LEARNING = "reset_learning"
 SERVICE_GET_STATE = "get_state"
 
-Mode = Literal['heat', 'cool', 'fan_only', 'off']
+Mode = Literal['heat', 'cool', 'dry', 'fan_only', 'off']
 FanSpeed = Literal['quiet', 'low', 'medium', 'high']
 
 # Fan speed hierarchy for comparison
@@ -569,16 +570,18 @@ class DualZoneHVACController:
         mapping = {
             HVAC_MODE_HEAT: 'heat',
             HVAC_MODE_COOL: 'cool',
+            HVAC_MODE_DRY: 'dry',
             HVAC_MODE_FAN_ONLY: 'fan_only',
             HVAC_MODE_OFF: 'off',
         }
         return mapping.get(ha_mode, 'off')
-    
+
     def _internal_mode_to_ha(self, mode: Mode) -> str:
         """Convert internal mode to Home Assistant HVAC mode"""
         mapping = {
             'heat': HVAC_MODE_HEAT,
             'cool': HVAC_MODE_COOL,
+            'dry': HVAC_MODE_DRY,
             'fan_only': HVAC_MODE_FAN_ONLY,
             'off': HVAC_MODE_OFF,
         }
@@ -791,6 +794,20 @@ class DualZoneHVACController:
             else:
                 return 'fan_only'
 
+        # For dry (dehumidification) mode
+        elif hvac_mode == HVAC_MODE_DRY:
+            # Dry mode runs to dehumidify regardless of temperature
+            # Only switch to fan_only if temperature gets too far off target
+            target = zone_state.target_setpoint
+            error = abs(target - current_temp)
+
+            # If temperature is within reasonable range, use dry mode
+            if error < 5.0:  # Within 5°F of target
+                return 'dry'
+            else:
+                # Temperature too far off, switch to fan_only to avoid over-cooling
+                return 'fan_only'
+
         # Default to fan_only
         return 'fan_only'
 
@@ -818,8 +835,8 @@ class DualZoneHVACController:
         return self.deadband
 
     def is_compressor_running(self, mode1: Mode, mode2: Mode) -> bool:
-        """Check if compressor is running (either zone in heat/cool)"""
-        return mode1 in ['heat', 'cool'] or mode2 in ['heat', 'cool']
+        """Check if compressor is running (either zone in heat/cool/dry)"""
+        return mode1 in ['heat', 'cool', 'dry'] or mode2 in ['heat', 'cool', 'dry']
 
     def enforce_minimum_runtime(self, mode1: Mode, mode2: Mode) -> tuple[Mode, Mode]:
         """
@@ -870,7 +887,14 @@ class DualZoneHVACController:
 
     def modes_conflict(self, mode1: Mode, mode2: Mode) -> bool:
         """Check if two modes conflict"""
-        return (mode1 == 'heat' and mode2 == 'cool') or (mode1 == 'cool' and mode2 == 'heat')
+        # Heat and cool conflict
+        if (mode1 == 'heat' and mode2 == 'cool') or (mode1 == 'cool' and mode2 == 'heat'):
+            return True
+        # Heat and dry conflict (dry typically involves cooling)
+        if (mode1 == 'heat' and mode2 == 'dry') or (mode1 == 'dry' and mode2 == 'heat'):
+            return True
+        # Cool and dry don't conflict (both cool)
+        return False
     
     def update_temperature_history(self, zone: str, temp: float, mode: Mode):
         """Update history and calculate rates of change"""

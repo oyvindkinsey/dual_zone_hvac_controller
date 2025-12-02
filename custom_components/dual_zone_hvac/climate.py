@@ -61,11 +61,12 @@ class DualZoneClimate(ClimateEntity):
         # Temperature unit
         self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
 
-        # Supported modes - heat, cool, auto (heat_cool), and off
+        # Supported modes - heat, cool, auto (heat_cool), dry, and off
         self._attr_hvac_modes = [
             HVACMode.HEAT,
             HVACMode.COOL,
             HVACMode.HEAT_COOL,
+            HVACMode.DRY,
             HVACMode.OFF
         ]
 
@@ -85,7 +86,7 @@ class DualZoneClimate(ClimateEntity):
             # Heat/Cool mode supports temperature range
             features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         else:
-            # Heat, Cool, or Off modes support single temperature
+            # Heat, Cool, Dry, or Off modes support single temperature
             features |= ClimateEntityFeature.TARGET_TEMPERATURE
 
         return features
