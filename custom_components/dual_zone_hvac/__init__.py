@@ -760,15 +760,16 @@ class DualZoneHVACController:
             return 'off'
 
         # For heat_cool (auto) mode, use temperature range
+        # Note: The range itself IS the deadband, don't add extra deadband on top
         if hvac_mode == HVAC_MODE_HEAT_COOL:
             temp_low = zone_state.target_temp_low
             temp_high = zone_state.target_temp_high
 
             # Too cold - need heating
-            if current_temp < temp_low - deadband:
+            if current_temp < temp_low:
                 return 'heat'
             # Too hot - need cooling
-            elif current_temp > temp_high + deadband:
+            elif current_temp > temp_high:
                 return 'cool'
             # Within range - just fan
             else:

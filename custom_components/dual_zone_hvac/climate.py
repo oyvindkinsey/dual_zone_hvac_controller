@@ -148,6 +148,21 @@ class DualZoneClimate(ClimateEntity):
             temp_high = float(kwargs[ATTR_TARGET_TEMP_HIGH])
             temp_low = float(kwargs[ATTR_TARGET_TEMP_LOW])
 
+            # Ensure minimum range width to prevent rapid cycling
+            # Minimum should be at least 2x deadband for effective operation
+            min_range = max(self._controller.deadband * 2, 1.0)
+            current_range = temp_high - temp_low
+
+            if current_range < min_range:
+                # Expand range symmetrically around midpoint
+                midpoint = (temp_high + temp_low) / 2.0
+                temp_low = midpoint - (min_range / 2.0)
+                temp_high = midpoint + (min_range / 2.0)
+                _LOGGER.warning(
+                    f"{self._zone_id}: Temperature range too narrow ({current_range:.1f}°F), "
+                    f"expanded to {min_range:.1f}°F minimum: {temp_low:.1f}-{temp_high:.1f}°F"
+                )
+
             old_high = zone.target_temp_high
             old_low = zone.target_temp_low
 
