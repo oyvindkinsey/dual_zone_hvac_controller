@@ -392,9 +392,12 @@ class DualZoneHVACController:
                 'unit_of_measurement': '°F',
                 'friendly_name': 'Zone 1 Target Temperature',
                 'nominal_fan_speed': self.zones['zone1'].nominal_fan_speed,
+                'heating_rate': self.heating_rate['zone1'],
+                'cooling_rate': self.cooling_rate['zone1'],
+                'leakage_rate': self.leakage_rate['zone1'],
             }
         )
-        
+
         self.hass.states.async_set(
             f"sensor.{DOMAIN}_zone2_target",
             self.zones['zone2'].target_setpoint,
@@ -402,14 +405,40 @@ class DualZoneHVACController:
                 'unit_of_measurement': '°F',
                 'friendly_name': 'Zone 2 Target Temperature',
                 'nominal_fan_speed': self.zones['zone2'].nominal_fan_speed,
+                'heating_rate': self.heating_rate['zone2'],
+                'cooling_rate': self.cooling_rate['zone2'],
+                'leakage_rate': self.leakage_rate['zone2'],
             }
         )
-        
+
         self.hass.states.async_set(
             f"sensor.{DOMAIN}_enabled",
             'on' if self.enabled else 'off',
             {
                 'friendly_name': 'Dual Zone HVAC Enabled',
+            }
+        )
+
+        # Create a dedicated sensor for learned rates with diagnostic info
+        self.hass.states.async_set(
+            f"sensor.{DOMAIN}_learned_rates",
+            'active' if any([
+                self.heating_rate['zone1'] > 0,
+                self.heating_rate['zone2'] > 0,
+                self.cooling_rate['zone1'] > 0,
+                self.cooling_rate['zone2'] > 0,
+                self.leakage_rate['zone1'] > 0,
+                self.leakage_rate['zone2'] > 0
+            ]) else 'learning',
+            {
+                'friendly_name': 'Learned Rates',
+                'zone1_heating_rate': f"{self.heating_rate['zone1']:.3f}°F/min",
+                'zone1_cooling_rate': f"{self.cooling_rate['zone1']:.3f}°F/min",
+                'zone1_leakage_rate': f"{self.leakage_rate['zone1']:.3f}°F/min",
+                'zone2_heating_rate': f"{self.heating_rate['zone2']:.3f}°F/min",
+                'zone2_cooling_rate': f"{self.cooling_rate['zone2']:.3f}°F/min",
+                'zone2_leakage_rate': f"{self.leakage_rate['zone2']:.3f}°F/min",
+                'compressor_starts_last_hour': self.count_recent_starts(),
             }
         )
     
@@ -422,9 +451,12 @@ class DualZoneHVACController:
                 'unit_of_measurement': '°F',
                 'friendly_name': 'Zone 1 Target Temperature',
                 'nominal_fan_speed': self.zones['zone1'].nominal_fan_speed,
+                'heating_rate': self.heating_rate['zone1'],
+                'cooling_rate': self.cooling_rate['zone1'],
+                'leakage_rate': self.leakage_rate['zone1'],
             }
         )
-        
+
         self.hass.states.async_set(
             f"sensor.{DOMAIN}_zone2_target",
             self.zones['zone2'].target_setpoint,
@@ -432,14 +464,40 @@ class DualZoneHVACController:
                 'unit_of_measurement': '°F',
                 'friendly_name': 'Zone 2 Target Temperature',
                 'nominal_fan_speed': self.zones['zone2'].nominal_fan_speed,
+                'heating_rate': self.heating_rate['zone2'],
+                'cooling_rate': self.cooling_rate['zone2'],
+                'leakage_rate': self.leakage_rate['zone2'],
             }
         )
-        
+
         self.hass.states.async_set(
             f"sensor.{DOMAIN}_enabled",
             'on' if self.enabled else 'off',
             {
                 'friendly_name': 'Dual Zone HVAC Enabled',
+            }
+        )
+
+        # Update learned rates sensor
+        self.hass.states.async_set(
+            f"sensor.{DOMAIN}_learned_rates",
+            'active' if any([
+                self.heating_rate['zone1'] > 0,
+                self.heating_rate['zone2'] > 0,
+                self.cooling_rate['zone1'] > 0,
+                self.cooling_rate['zone2'] > 0,
+                self.leakage_rate['zone1'] > 0,
+                self.leakage_rate['zone2'] > 0
+            ]) else 'learning',
+            {
+                'friendly_name': 'Learned Rates',
+                'zone1_heating_rate': f"{self.heating_rate['zone1']:.3f}°F/min",
+                'zone1_cooling_rate': f"{self.cooling_rate['zone1']:.3f}°F/min",
+                'zone1_leakage_rate': f"{self.leakage_rate['zone1']:.3f}°F/min",
+                'zone2_heating_rate': f"{self.heating_rate['zone2']:.3f}°F/min",
+                'zone2_cooling_rate': f"{self.cooling_rate['zone2']:.3f}°F/min",
+                'zone2_leakage_rate': f"{self.leakage_rate['zone2']:.3f}°F/min",
+                'compressor_starts_last_hour': self.count_recent_starts(),
             }
         )
     
