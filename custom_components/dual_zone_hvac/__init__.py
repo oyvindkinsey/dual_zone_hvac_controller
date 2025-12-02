@@ -81,6 +81,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.const import (
     CONF_NAME,
     STATE_UNKNOWN,
@@ -247,7 +248,7 @@ class DualZoneHVACController:
         await self._load_state()
 
         # Load the climate platform to create climate entities
-        await self.hass.helpers.discovery.async_load_platform('climate', DOMAIN, {}, self._config)
+        await async_load_platform(self.hass, 'climate', DOMAIN, {}, self._config)
 
         # Register services (kept for backwards compatibility)
         self.hass.services.async_register(
