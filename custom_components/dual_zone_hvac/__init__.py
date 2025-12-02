@@ -94,6 +94,7 @@ from homeassistant.const import (
 
 HVAC_MODE_HEAT = HVACMode.HEAT
 HVAC_MODE_COOL = HVACMode.COOL
+HVAC_MODE_HEAT_COOL = HVACMode.HEAT_COOL
 HVAC_MODE_FAN_ONLY = HVACMode.FAN_ONLY
 HVAC_MODE_OFF = HVACMode.OFF
 
@@ -179,6 +180,9 @@ class ZoneState:
     mode_history: deque = field(default_factory=lambda: deque(maxlen=10))
     last_mode: str = HVAC_MODE_OFF
     target_setpoint: float = 70.0
+    target_temp_high: float = 72.0  # For heat_cool mode
+    target_temp_low: float = 68.0   # For heat_cool mode
+    hvac_mode: str = HVAC_MODE_HEAT  # User-selected mode: heat, cool, heat_cool, off
     climate_entity: str = ""
     nominal_fan_speed: str = "medium"  # Changed from max_fan_speed to nominal_fan_speed
 
@@ -204,15 +208,25 @@ class DualZoneHVACController:
         zone1_config = config[CONF_ZONE1]
         zone2_config = config[CONF_ZONE2]
 
+        # Initialize zones with default temperature ranges
+        initial_temp1 = zone1_config[CONF_TARGET_TEMPERATURE]
+        initial_temp2 = zone2_config[CONF_TARGET_TEMPERATURE]
+
         self.zones = {
             'zone1': ZoneState(
                 climate_entity=zone1_config[CONF_CLIMATE_ENTITY],
-                target_setpoint=zone1_config[CONF_TARGET_TEMPERATURE],
+                target_setpoint=initial_temp1,
+                target_temp_low=initial_temp1 - 2.0,
+                target_temp_high=initial_temp1 + 2.0,
+                hvac_mode=HVAC_MODE_HEAT_COOL,  # Default to auto mode
                 nominal_fan_speed=DEFAULT_NOMINAL_FAN_SPEED
             ),
             'zone2': ZoneState(
                 climate_entity=zone2_config[CONF_CLIMATE_ENTITY],
-                target_setpoint=zone2_config[CONF_TARGET_TEMPERATURE],
+                target_setpoint=initial_temp2,
+                target_temp_low=initial_temp2 - 2.0,
+                target_temp_high=initial_temp2 + 2.0,
+                hvac_mode=HVAC_MODE_HEAT_COOL,  # Default to auto mode
                 nominal_fan_speed=DEFAULT_NOMINAL_FAN_SPEED
             )
         }
@@ -306,8 +320,8 @@ class DualZoneHVACController:
         )
 
         _LOGGER.info("Dual Zone HVAC Controller initialized")
-        _LOGGER.info(f"Zone 1: {self.zones['zone1'].climate_entity} -> {self.zones['zone1'].target_setpoint}°F")
-        _LOGGER.info(f"Zone 2: {self.zones['zone2'].climate_entity} -> {self.zones['zone2'].target_setpoint}°F")
+        _LOGGER.info(f"Zone 1: {self.zones['zone1'].climate_entity} -> {self.zones['zone1'].target_setpoint}°F (mode: {self.zones['zone1'].hvac_mode})")
+        _LOGGER.info(f"Zone 2: {self.zones['zone2'].climate_entity} -> {self.zones['zone2'].target_setpoint}°F (mode: {self.zones['zone2'].hvac_mode})")
 
         return True
     
@@ -330,10 +344,16 @@ class DualZoneHVACController:
                 # Load zone settings
                 if 'zone1' in data:
                     self.zones['zone1'].target_setpoint = data['zone1'].get('target_setpoint', self.zones['zone1'].target_setpoint)
+                    self.zones['zone1'].target_temp_low = data['zone1'].get('target_temp_low', self.zones['zone1'].target_temp_low)
+                    self.zones['zone1'].target_temp_high = data['zone1'].get('target_temp_high', self.zones['zone1'].target_temp_high)
+                    self.zones['zone1'].hvac_mode = data['zone1'].get('hvac_mode', self.zones['zone1'].hvac_mode)
                     self.zones['zone1'].nominal_fan_speed = data['zone1'].get('nominal_fan_speed', self.zones['zone1'].nominal_fan_speed)
-                
+
                 if 'zone2' in data:
                     self.zones['zone2'].target_setpoint = data['zone2'].get('target_setpoint', self.zones['zone2'].target_setpoint)
+                    self.zones['zone2'].target_temp_low = data['zone2'].get('target_temp_low', self.zones['zone2'].target_temp_low)
+                    self.zones['zone2'].target_temp_high = data['zone2'].get('target_temp_high', self.zones['zone2'].target_temp_high)
+                    self.zones['zone2'].hvac_mode = data['zone2'].get('hvac_mode', self.zones['zone2'].hvac_mode)
                     self.zones['zone2'].nominal_fan_speed = data['zone2'].get('nominal_fan_speed', self.zones['zone2'].nominal_fan_speed)
                 
                 # Load learned rates
@@ -369,10 +389,16 @@ class DualZoneHVACController:
             data = {
                 'zone1': {
                     'target_setpoint': self.zones['zone1'].target_setpoint,
+                    'target_temp_low': self.zones['zone1'].target_temp_low,
+                    'target_temp_high': self.zones['zone1'].target_temp_high,
+                    'hvac_mode': self.zones['zone1'].hvac_mode,
                     'nominal_fan_speed': self.zones['zone1'].nominal_fan_speed,
                 },
                 'zone2': {
                     'target_setpoint': self.zones['zone2'].target_setpoint,
+                    'target_temp_low': self.zones['zone2'].target_temp_low,
+                    'target_temp_high': self.zones['zone2'].target_temp_high,
+                    'hvac_mode': self.zones['zone2'].hvac_mode,
                     'nominal_fan_speed': self.zones['zone2'].nominal_fan_speed,
                 },
                 'heating_rate': self.heating_rate,
@@ -720,17 +746,52 @@ class DualZoneHVACController:
         
         return nominal_speed
     
-    def determine_desired_mode(self, current_temp: float, target_temp: float, deadband_override: float = None) -> Mode:
-        """Determine what mode is needed based on current vs target temperature"""
+    def determine_desired_mode(self, zone: str, current_temp: float, deadband_override: float = None) -> Mode:
+        """Determine what mode is needed based on current temp, user-selected hvac_mode, and target setpoints"""
         deadband = deadband_override if deadband_override is not None else self.deadband
-        error = target_temp - current_temp
+        zone_state = self.zones[zone]
+        hvac_mode = zone_state.hvac_mode
 
-        if abs(error) <= deadband:
-            return 'fan_only'
-        elif error > deadband:
-            return 'heat'
-        elif error < -deadband:
-            return 'cool'
+        # If OFF mode selected, return off
+        if hvac_mode == HVAC_MODE_OFF:
+            return 'off'
+
+        # For heat_cool (auto) mode, use temperature range
+        if hvac_mode == HVAC_MODE_HEAT_COOL:
+            temp_low = zone_state.target_temp_low
+            temp_high = zone_state.target_temp_high
+
+            # Too cold - need heating
+            if current_temp < temp_low - deadband:
+                return 'heat'
+            # Too hot - need cooling
+            elif current_temp > temp_high + deadband:
+                return 'cool'
+            # Within range - just fan
+            else:
+                return 'fan_only'
+
+        # For heat-only mode
+        elif hvac_mode == HVAC_MODE_HEAT:
+            target = zone_state.target_setpoint
+            error = target - current_temp
+
+            if error > deadband:
+                return 'heat'
+            else:
+                return 'fan_only'
+
+        # For cool-only mode
+        elif hvac_mode == HVAC_MODE_COOL:
+            target = zone_state.target_setpoint
+            error = target - current_temp
+
+            if error < -deadband:
+                return 'cool'
+            else:
+                return 'fan_only'
+
+        # Default to fan_only
         return 'fan_only'
 
     def count_recent_starts(self) -> int:
@@ -969,9 +1030,9 @@ class DualZoneHVACController:
             if dynamic_deadband != self.deadband:
                 _LOGGER.debug(f"Using dynamic deadband: {dynamic_deadband:.1f}°F (normal: {self.deadband:.1f}°F)")
 
-            # Determine desired modes using dynamic deadband
-            desired_mode1 = self.determine_desired_mode(t1, target1, dynamic_deadband)
-            desired_mode2 = self.determine_desired_mode(t2, target2, dynamic_deadband)
+            # Determine desired modes using dynamic deadband and user-selected hvac_mode
+            desired_mode1 = self.determine_desired_mode('zone1', t1, dynamic_deadband)
+            desired_mode2 = self.determine_desired_mode('zone2', t2, dynamic_deadband)
 
             error1 = target1 - t1
             error2 = target2 - t2

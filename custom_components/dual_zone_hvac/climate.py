@@ -11,6 +11,9 @@ from homeassistant.components.climate import (
     ClimateEntityFeature,
     HVACMode,
     ATTR_CURRENT_TEMPERATURE,
+    ATTR_TARGET_TEMP_HIGH,
+    ATTR_TARGET_TEMP_LOW,
+    ATTR_HVAC_MODE,
 )
 
 from . import DOMAIN, DualZoneHVACController
@@ -55,25 +58,37 @@ class DualZoneClimate(ClimateEntity):
         self._attr_unique_id = f"{DOMAIN}_{zone_id}"
         self._attr_should_poll = False
 
-        # Supported features
-        self._attr_supported_features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE |
-            ClimateEntityFeature.FAN_MODE
-        )
-
         # Temperature unit
         self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
 
-        # Supported modes
+        # Supported modes - heat, cool, auto (heat_cool), and off
         self._attr_hvac_modes = [
             HVACMode.HEAT,
             HVACMode.COOL,
-            HVACMode.FAN_ONLY,
+            HVACMode.HEAT_COOL,
             HVACMode.OFF
         ]
 
         # Supported fan modes
         self._attr_fan_modes = ['quiet', 'low', 'medium', 'high']
+
+    @property
+    def supported_features(self) -> int:
+        """Return the list of supported features - changes based on HVAC mode"""
+        # Base features always include fan mode
+        features = ClimateEntityFeature.FAN_MODE
+
+        # Add temperature control features based on current mode
+        current_mode = self._controller.zones[self._zone_id].hvac_mode
+
+        if current_mode == HVACMode.HEAT_COOL:
+            # Heat/Cool mode supports temperature range
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        else:
+            # Heat, Cool, or Off modes support single temperature
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE
+
+        return features
 
     @property
     def current_temperature(self) -> Optional[float]:
@@ -86,17 +101,24 @@ class DualZoneClimate(ClimateEntity):
     @property
     def target_temperature(self) -> Optional[float]:
         """Return the target temperature from controller state"""
+        # For heat/cool modes, return the single setpoint
+        # For heat_cool mode, this represents the midpoint
         return self._controller.zones[self._zone_id].target_setpoint
 
     @property
+    def target_temperature_high(self) -> Optional[float]:
+        """Return the high target temperature for heat_cool mode"""
+        return self._controller.zones[self._zone_id].target_temp_high
+
+    @property
+    def target_temperature_low(self) -> Optional[float]:
+        """Return the low target temperature for heat_cool mode"""
+        return self._controller.zones[self._zone_id].target_temp_low
+
+    @property
     def hvac_mode(self) -> HVACMode:
-        """Return the current HVAC mode calculated by the controller"""
-        # Get the current mode from the physical entity since that reflects
-        # what the controller has set
-        state = self.hass.states.get(self._physical_entity)
-        if state is None or state.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]:
-            return HVACMode.OFF
-        return HVACMode(state.state)
+        """Return the user-selected HVAC mode"""
+        return HVACMode(self._controller.zones[self._zone_id].hvac_mode)
 
     @property
     def fan_mode(self) -> Optional[str]:
@@ -106,21 +128,53 @@ class DualZoneClimate(ClimateEntity):
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return additional state attributes"""
+        zone = self._controller.zones[self._zone_id]
         return {
             'heating_rate': f"{self._controller.heating_rate[self._zone_id]:.3f}°F/min",
             'cooling_rate': f"{self._controller.cooling_rate[self._zone_id]:.3f}°F/min",
             'leakage_rate': f"{self._controller.leakage_rate[self._zone_id]:.3f}°F/min",
             'physical_entity': self._physical_entity,
+            'hvac_mode': zone.hvac_mode,
+            'target_temp_range': f"{zone.target_temp_low:.1f}-{zone.target_temp_high:.1f}°F",
         }
 
     async def async_set_temperature(self, **kwargs) -> None:
-        """Set new target temperature"""
-        if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
-            return
+        """Set new target temperature or temperature range"""
+        zone = self._controller.zones[self._zone_id]
 
-        old_temp = self._controller.zones[self._zone_id].target_setpoint
-        self._controller.zones[self._zone_id].target_setpoint = float(temperature)
-        _LOGGER.info(f"Set {self._zone_id} target temperature: {old_temp}°F -> {temperature}°F")
+        # Handle temperature range (for heat_cool mode)
+        if ATTR_TARGET_TEMP_HIGH in kwargs and ATTR_TARGET_TEMP_LOW in kwargs:
+            temp_high = float(kwargs[ATTR_TARGET_TEMP_HIGH])
+            temp_low = float(kwargs[ATTR_TARGET_TEMP_LOW])
+
+            old_high = zone.target_temp_high
+            old_low = zone.target_temp_low
+
+            zone.target_temp_high = temp_high
+            zone.target_temp_low = temp_low
+            # Update midpoint setpoint
+            zone.target_setpoint = (temp_high + temp_low) / 2.0
+
+            _LOGGER.info(
+                f"Set {self._zone_id} temperature range: "
+                f"{old_low:.1f}-{old_high:.1f}°F -> {temp_low:.1f}-{temp_high:.1f}°F"
+            )
+
+        # Handle single temperature (for heat/cool modes)
+        elif ATTR_TEMPERATURE in kwargs:
+            temperature = float(kwargs[ATTR_TEMPERATURE])
+            old_temp = zone.target_setpoint
+
+            zone.target_setpoint = temperature
+            # Also update the range around this setpoint
+            zone.target_temp_low = temperature - 2.0
+            zone.target_temp_high = temperature + 2.0
+
+            _LOGGER.info(f"Set {self._zone_id} target temperature: {old_temp:.1f}°F -> {temperature:.1f}°F")
+
+        # Handle mode change if provided
+        if ATTR_HVAC_MODE in kwargs:
+            await self.async_set_hvac_mode(HVACMode(kwargs[ATTR_HVAC_MODE]))
 
         # Save state and trigger control loop
         await self._controller._save_state()
@@ -130,11 +184,17 @@ class DualZoneClimate(ClimateEntity):
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set HVAC mode - not directly supported, controller manages modes"""
-        _LOGGER.warning(
-            f"Direct HVAC mode changes not supported. The controller manages modes automatically. "
-            f"Requested mode {hvac_mode} for {self._zone_id} ignored."
-        )
+        """Set HVAC mode (heat, cool, heat_cool, or off)"""
+        old_mode = self._controller.zones[self._zone_id].hvac_mode
+        self._controller.zones[self._zone_id].hvac_mode = hvac_mode
+        _LOGGER.info(f"Set {self._zone_id} HVAC mode: {old_mode} -> {hvac_mode}")
+
+        # Save state and trigger control loop
+        await self._controller._save_state()
+        await self._controller.async_control_loop()
+
+        # Notify HA that state changed
+        self.async_write_ha_state()
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set nominal fan speed for this zone"""
