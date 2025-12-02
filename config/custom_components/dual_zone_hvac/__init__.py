@@ -779,9 +779,12 @@ class DualZoneHVACController:
                     f"Running for {runtime:.0f}s, need {self.min_compressor_runtime}s. "
                     f"Continuing for {remaining:.0f}s more."
                 )
-                # Keep at least one zone in heat/cool to maintain compressor running
-                # Prefer to keep the zone with larger error in conditioning mode
-                return mode1, mode2  # Return original modes that would keep running
+                # Keep compressor running by returning the previous modes
+                # that were keeping it in heat/cool
+                prev_mode1 = self.zones['zone1'].last_mode
+                prev_mode2 = self.zones['zone2'].last_mode
+                _LOGGER.debug(f"Overriding to previous modes: Zone1={prev_mode1}, Zone2={prev_mode2}")
+                return prev_mode1, prev_mode2
 
         # No timing constraints violated
         return mode1, mode2
