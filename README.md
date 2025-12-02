@@ -100,29 +100,26 @@ The controller manages both zones simultaneously:
 
 ## Installation
 
-### 1. Create Directory Structure
+### Option 1: HACS (Recommended)
 
-```bash
-mkdir -p config/custom_components/dual_zone_hvac
-mkdir -p config/www
-```
+1. Open HACS in Home Assistant
+2. Go to **Integrations**
+3. Click the **three dots** in the top right
+4. Select **Custom repositories**
+5. Add repository URL: `https://github.com/oyvindkinsey/dual_zone_hvac_controller`
+6. Category: **Integration**
+7. Click **Add**
+8. Find "Dual Zone HVAC Controller" and click **Install**
+9. Restart Home Assistant
 
-### 2. Install Files
+### Option 2: Manual Installation
 
-Copy these files to your Home Assistant config directory:
+1. Download this repository
+2. Copy the `custom_components/dual_zone_hvac` folder to your Home Assistant `config/custom_components/` directory
+3. Copy `www/dual-zone-hvac-card.js` to your Home Assistant `config/www/` directory
+4. Restart Home Assistant
 
-```
-config/
-├── custom_components/
-│   └── dual_zone_hvac/
-│       ├── __init__.py
-│       ├── manifest.json
-│       └── services.yaml
-└── www/
-    └── dual-zone-hvac-card.js
-```
-
-### 3. Add Resource to Lovelace
+### Add Lovelace Resource
 
 **Settings** → **Dashboards** → **Three dots menu** → **Resources** → **Add Resource**
 
