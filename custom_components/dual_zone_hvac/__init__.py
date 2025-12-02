@@ -72,7 +72,7 @@ import logging
 import asyncio
 import time
 from datetime import timedelta
-from typing import Dict, Optional, Literal
+from typing import Dict, Optional, Literal, Any
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -184,11 +184,11 @@ class ZoneState:
 
 class DualZoneHVACController:
     """Controller for managing two HVAC zones with leakage compensation"""
-    
+
     def __init__(self, hass: HomeAssistant, config: dict):
         self.hass = hass
         self._config = config
-        
+
         # Settings
         settings = config.get(CONF_SETTINGS, {})
         self.deadband = settings.get(CONF_DEADBAND, DEFAULT_DEADBAND)
@@ -198,11 +198,11 @@ class DualZoneHVACController:
         self.max_starts_per_hour = settings.get(CONF_MAX_STARTS_PER_HOUR, DEFAULT_MAX_STARTS_PER_HOUR)
         self.min_compressor_runtime = settings.get(CONF_MIN_COMPRESSOR_RUNTIME, DEFAULT_MIN_COMPRESSOR_RUNTIME)
         self.min_compressor_off_time = settings.get(CONF_MIN_COMPRESSOR_OFF_TIME, DEFAULT_MIN_COMPRESSOR_OFF_TIME)
-        
+
         # Zone configuration
         zone1_config = config[CONF_ZONE1]
         zone2_config = config[CONF_ZONE2]
-        
+
         self.zones = {
             'zone1': ZoneState(
                 climate_entity=zone1_config[CONF_CLIMATE_ENTITY],
@@ -215,19 +215,19 @@ class DualZoneHVACController:
                 nominal_fan_speed=DEFAULT_NOMINAL_FAN_SPEED
             )
         }
-        
+
         # Learned coefficients
         self.heating_rate = {'zone1': 0.0, 'zone2': 0.0}
         self.cooling_rate = {'zone1': 0.0, 'zone2': 0.0}
         self.leakage_rate = {'zone1': 0.0, 'zone2': 0.0}
-        
+
         # Tracking for rate calculation
         self.rate_samples = {
             'heating': {'zone1': [], 'zone2': []},
             'cooling': {'zone1': [], 'zone2': []},
             'leakage': {'zone1': [], 'zone2': []}
         }
-        
+
         self.enabled = True
         self.iteration_count = 0
         self._cancel_interval = None
@@ -237,13 +237,19 @@ class DualZoneHVACController:
         self.compressor_running = False
         self.compressor_last_start_time = None
         self.compressor_last_stop_time = None
+
+        # Climate entities (will be populated by climate platform)
+        self.climate_entities: Dict[str, Any] = {}
     
     async def async_setup(self):
         """Set up the controller"""
         # Load persisted state
         await self._load_state()
-        
-        # Register services
+
+        # Load the climate platform to create climate entities
+        await self.hass.helpers.discovery.async_load_platform('climate', DOMAIN, {}, self._config)
+
+        # Register services (kept for backwards compatibility)
         self.hass.services.async_register(
             DOMAIN,
             SERVICE_SET_TARGET_TEMPERATURE,
@@ -253,7 +259,7 @@ class DualZoneHVACController:
                 vol.Required('temperature'): vol.Coerce(float),
             })
         )
-        
+
         self.hass.services.async_register(
             DOMAIN,
             SERVICE_SET_NOMINAL_FAN_SPEED,
@@ -263,7 +269,7 @@ class DualZoneHVACController:
                 vol.Required('fan_speed'): vol.In(['quiet', 'low', 'medium', 'high']),
             })
         )
-        
+
         self.hass.services.async_register(
             DOMAIN,
             SERVICE_SET_ENABLE,
@@ -272,19 +278,19 @@ class DualZoneHVACController:
                 vol.Required('enabled'): cv.boolean,
             })
         )
-        
+
         self.hass.services.async_register(
             DOMAIN,
             SERVICE_RESET_LEARNING,
             self.async_reset_learning,
         )
-        
+
         self.hass.services.async_register(
             DOMAIN,
             SERVICE_GET_STATE,
             self.async_get_state,
         )
-        
+
         # Create sensor entities to expose state
         await self._create_sensors()
 
@@ -301,7 +307,7 @@ class DualZoneHVACController:
         _LOGGER.info("Dual Zone HVAC Controller initialized")
         _LOGGER.info(f"Zone 1: {self.zones['zone1'].climate_entity} -> {self.zones['zone1'].target_setpoint}°F")
         _LOGGER.info(f"Zone 2: {self.zones['zone2'].climate_entity} -> {self.zones['zone2'].target_setpoint}°F")
-        
+
         return True
     
     async def async_unload(self):
@@ -384,33 +390,7 @@ class DualZoneHVACController:
     
     async def _create_sensors(self):
         """Create sensor entities to expose controller state"""
-        # Create state attributes that can be read by the UI
-        self.hass.states.async_set(
-            f"sensor.{DOMAIN}_zone1_target",
-            self.zones['zone1'].target_setpoint,
-            {
-                'unit_of_measurement': '°F',
-                'friendly_name': 'Zone 1 Target Temperature',
-                'nominal_fan_speed': self.zones['zone1'].nominal_fan_speed,
-                'heating_rate': self.heating_rate['zone1'],
-                'cooling_rate': self.cooling_rate['zone1'],
-                'leakage_rate': self.leakage_rate['zone1'],
-            }
-        )
-
-        self.hass.states.async_set(
-            f"sensor.{DOMAIN}_zone2_target",
-            self.zones['zone2'].target_setpoint,
-            {
-                'unit_of_measurement': '°F',
-                'friendly_name': 'Zone 2 Target Temperature',
-                'nominal_fan_speed': self.zones['zone2'].nominal_fan_speed,
-                'heating_rate': self.heating_rate['zone2'],
-                'cooling_rate': self.cooling_rate['zone2'],
-                'leakage_rate': self.leakage_rate['zone2'],
-            }
-        )
-
+        # Enabled sensor
         self.hass.states.async_set(
             f"sensor.{DOMAIN}_enabled",
             'on' if self.enabled else 'off',
@@ -419,7 +399,7 @@ class DualZoneHVACController:
             }
         )
 
-        # Create a dedicated sensor for learned rates with diagnostic info
+        # Learned rates sensor with diagnostic info
         self.hass.states.async_set(
             f"sensor.{DOMAIN}_learned_rates",
             'active' if any([
@@ -444,32 +424,7 @@ class DualZoneHVACController:
     
     async def _update_sensors(self):
         """Update sensor entities with current state"""
-        self.hass.states.async_set(
-            f"sensor.{DOMAIN}_zone1_target",
-            self.zones['zone1'].target_setpoint,
-            {
-                'unit_of_measurement': '°F',
-                'friendly_name': 'Zone 1 Target Temperature',
-                'nominal_fan_speed': self.zones['zone1'].nominal_fan_speed,
-                'heating_rate': self.heating_rate['zone1'],
-                'cooling_rate': self.cooling_rate['zone1'],
-                'leakage_rate': self.leakage_rate['zone1'],
-            }
-        )
-
-        self.hass.states.async_set(
-            f"sensor.{DOMAIN}_zone2_target",
-            self.zones['zone2'].target_setpoint,
-            {
-                'unit_of_measurement': '°F',
-                'friendly_name': 'Zone 2 Target Temperature',
-                'nominal_fan_speed': self.zones['zone2'].nominal_fan_speed,
-                'heating_rate': self.heating_rate['zone2'],
-                'cooling_rate': self.cooling_rate['zone2'],
-                'leakage_rate': self.leakage_rate['zone2'],
-            }
-        )
-
+        # Update enabled sensor
         self.hass.states.async_set(
             f"sensor.{DOMAIN}_enabled",
             'on' if self.enabled else 'off',
@@ -500,6 +455,10 @@ class DualZoneHVACController:
                 'compressor_starts_last_hour': self.count_recent_starts(),
             }
         )
+
+        # Update climate entities
+        for entity in self.climate_entities.values():
+            entity.update_state()
     
     async def async_set_target_temperature(self, call: ServiceCall):
         """Service to set target temperature for a zone"""
@@ -1177,7 +1136,11 @@ class DualZoneHVACController:
                 f"C[{self.cooling_rate['zone1']:.3f},{self.cooling_rate['zone2']:.3f}] "
                 f"L[{self.leakage_rate['zone1']:.3f},{self.leakage_rate['zone2']:.3f}]"
             )
-        
+
+            # Update climate entity states
+            for entity in self.climate_entities.values():
+                entity.update_state()
+
         except Exception as e:
             _LOGGER.error(f"Error in control loop: {e}", exc_info=True)
 

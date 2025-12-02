@@ -19,9 +19,9 @@ Intelligent management for dual-zone HVAC systems with refrigerant leakage compe
 - Start counting (max 3/hour with dynamic deadband)
 - State persistence across restarts
 
-✅ **Custom Lovelace UI Card**
-- Discrete temperature controls (66-72°F)
-- Per-zone fan speed settings
+✅ **Climate Entity Integration**
+- Standard thermostat cards (no custom resources)
+- Voice assistant compatible
 - Real-time status and mode display
 
 ✅ **Monitoring & Diagnostics**
@@ -33,9 +33,8 @@ Intelligent management for dual-zone HVAC systems with refrigerant leakage compe
 
 1. Install via HACS
 2. Add configuration to `configuration.yaml`
-3. Add Lovelace resource: `/local/dual-zone-hvac-card.js`
-4. Add UI card to dashboard
-5. Restart Home Assistant
+3. Restart Home Assistant
+4. Add climate entities to dashboard using standard thermostat cards
 
 See [README](https://github.com/oyvindkinsey/dual_zone_hvac_controller) for detailed installation and configuration.
 

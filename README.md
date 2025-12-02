@@ -40,13 +40,13 @@ Three layers of protection prevent short cycling and extend equipment life:
    - Tracks compressor start times across restarts
    - Maintains protection after Home Assistant restarts
 
-### Custom Lovelace UI Card
-- **Zone naming** with configurable friendly names
-- **Discrete temperature buttons** (66-72°F in 1°F increments)
-- **Fan speed controls** for each zone
-- **Enable/disable toggle** for the entire controller
-- **Visual mode badges** showing current operation (heat/cool/fan_only/off)
-- **Real-time temperature display** with current and target temps
+### Climate Entity Integration
+- **Standard Home Assistant thermostat cards** - no custom Lovelace resources needed
+- **Voice assistant compatible** - works with Alexa, Google Home, etc.
+- **Temperature control** - set target temperature for each zone
+- **Fan speed control** - configure nominal fan speed per zone
+- **Automatic mode management** - controller handles heat/cool/fan_only modes
+- **Real-time status** - current temp, target temp, and operating mode displayed
 
 ### Monitoring & Diagnostics
 - **Learned rates exposed as sensor entities**
@@ -116,17 +116,9 @@ The controller manages both zones simultaneously:
 
 1. Download this repository
 2. Copy the `custom_components/dual_zone_hvac` folder to your Home Assistant `config/custom_components/` directory
-3. Copy `www/dual-zone-hvac-card.js` to your Home Assistant `config/www/` directory
-4. Restart Home Assistant
+3. Restart Home Assistant
 
-### Add Lovelace Resource
-
-**Settings** → **Dashboards** → **Three dots menu** → **Resources** → **Add Resource**
-
-- URL: `/local/dual-zone-hvac-card.js`
-- Type: JavaScript Module
-
-### 4. Configure
+### Configuration
 
 Add to `configuration.yaml`:
 
@@ -148,24 +140,55 @@ dual_zone_hvac:
     min_compressor_off_time: 180     # Minimum off-time (seconds)
 ```
 
-### 5. Add UI Card to Dashboard
-
-```yaml
-type: custom:dual-zone-hvac-card
-zone1_entity: climate.heat_pump_1_upstairs_heat_pump
-zone2_entity: climate.heat_pump_2_downstairs_heat_pump
-zone1_name: Upstairs
-zone2_name: Downstairs
-```
-
-### 6. Restart Home Assistant
+### Restart Home Assistant
 
 Full restart required (not just reload).
 
+## Climate Entities
+
+After installation, the integration creates two climate entities that you can control through Home Assistant's standard thermostat card:
+
+- `climate.dual_zone_hvac_zone1` - Control for Zone 1
+- `climate.dual_zone_hvac_zone2` - Control for Zone 2
+
+Each climate entity exposes:
+- **Current temperature** - from the underlying physical climate entity
+- **Target temperature** - set your desired temperature
+- **HVAC mode** - shows current mode (heat/cool/fan_only/off) managed automatically by the controller
+- **Fan mode** - set the nominal fan speed (quiet/low/medium/high) for this zone
+- **Learned rates** - heating, cooling, and leakage rates shown as attributes
+
+### Adding to Dashboard
+
+Use Home Assistant's standard thermostat card:
+
+```yaml
+type: thermostat
+entity: climate.dual_zone_hvac_zone1
+name: Upstairs Zone
+```
+
+Or use a horizontal stack to show both zones:
+
+```yaml
+type: horizontal-stack
+cards:
+  - type: thermostat
+    entity: climate.dual_zone_hvac_zone1
+    name: Upstairs
+  - type: thermostat
+    entity: climate.dual_zone_hvac_zone2
+    name: Downstairs
+```
+
+**Note:** The HVAC mode is managed automatically by the controller and cannot be changed directly. The controller determines the optimal mode based on both zones' temperatures and requirements.
+
 ## Services
 
+**Note:** You can control the zones directly through the climate entities (`climate.dual_zone_hvac_zone1`, `climate.dual_zone_hvac_zone2`) using standard Home Assistant climate services. The services below are provided for backwards compatibility and advanced automation scenarios.
+
 ### `dual_zone_hvac.set_target_temperature`
-Set target temperature for a zone.
+Set target temperature for a zone (alternative to using `climate.set_temperature` on the climate entity).
 
 ```yaml
 service: dual_zone_hvac.set_target_temperature
@@ -175,7 +198,7 @@ data:
 ```
 
 ### `dual_zone_hvac.set_nominal_fan_speed`
-Set nominal fan speed for a zone.
+Set nominal fan speed for a zone (alternative to using `climate.set_fan_mode` on the climate entity).
 
 ```yaml
 service: dual_zone_hvac.set_nominal_fan_speed
@@ -250,17 +273,6 @@ The controller logs detailed information about:
 - Short-cycle prevention actions
 
 ## Customization
-
-### Temperature Button Range
-
-Edit `config/www/dual-zone-hvac-card.js`:
-
-```javascript
-// Temperature range configuration
-const TEMP_MIN = 66;  // Minimum temperature
-const TEMP_MAX = 72;  // Maximum temperature
-const TEMP_STEP = 1;  // Increment (1 or 0.5)
-```
 
 ### Climate Entity Requirements
 
