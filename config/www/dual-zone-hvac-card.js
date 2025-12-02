@@ -223,50 +223,6 @@ class DualZoneHVACCard extends HTMLElement {
           font-size: 18px;
           color: var(--secondary-text-color);
         }
-        .slider-container {
-          margin: 16px 0;
-        }
-        .slider-label {
-          display: flex;
-          justify-content: space-between;
-          font-size: 14px;
-          margin-bottom: 8px;
-          color: var(--secondary-text-color);
-        }
-        .slider {
-          width: 100%;
-          height: 8px;
-          -webkit-appearance: none;
-          appearance: none;
-          background: var(--divider-color);
-          border-radius: 4px;
-          outline: none;
-        }
-        .slider::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 24px;
-          height: 24px;
-          background: var(--primary-color);
-          border-radius: 50%;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        .slider::-webkit-slider-thumb:hover {
-          transform: scale(1.2);
-        }
-        .slider::-moz-range-thumb {
-          width: 24px;
-          height: 24px;
-          background: var(--primary-color);
-          border-radius: 50%;
-          cursor: pointer;
-          border: none;
-          transition: all 0.2s;
-        }
-        .slider::-moz-range-thumb:hover {
-          transform: scale(1.2);
-        }
         .quick-temps {
           display: flex;
           gap: 8px;
@@ -376,22 +332,11 @@ class DualZoneHVACCard extends HTMLElement {
             <div class="target-temp">→ ${this._zone1Target.toFixed(1)}°F</div>
           </div>
 
-          <div class="slider-container">
-            <div class="slider-label">
-              <span>Target Temperature</span>
-              <span>${this._zone1Target.toFixed(1)}°F</span>
-            </div>
-            <input type="range" min="60" max="85" step="0.5" 
-                   value="${this._zone1Target}" 
-                   class="slider"
-                   id="zone1-slider">
-          </div>
-
           <div class="quick-temps">
-            ${[65, 66, 67, 68, 69, 70, 71, 72].map(temp => `
-              <button class="temp-button ${Math.abs(this._zone1Target - temp) < 0.1 ? 'active' : ''}" 
+            ${[64, 64.5, 65, 65.5, 66, 66.5, 67, 67.5, 68, 68.5, 69, 69.5, 70, 70.5, 71, 71.5, 72, 72.5, 73].map(temp => `
+              <button class="temp-button ${Math.abs(this._zone1Target - temp) < 0.1 ? 'active' : ''}"
                       data-zone="1" data-temp="${temp}">
-                ${temp}°F
+                ${temp % 1 === 0 ? temp + '°' : temp.toFixed(1) + '°'}
               </button>
             `).join('')}
           </div>
@@ -423,22 +368,11 @@ class DualZoneHVACCard extends HTMLElement {
             <div class="target-temp">→ ${this._zone2Target.toFixed(1)}°F</div>
           </div>
 
-          <div class="slider-container">
-            <div class="slider-label">
-              <span>Target Temperature</span>
-              <span>${this._zone2Target.toFixed(1)}°F</span>
-            </div>
-            <input type="range" min="60" max="85" step="0.5" 
-                   value="${this._zone2Target}" 
-                   class="slider"
-                   id="zone2-slider">
-          </div>
-
           <div class="quick-temps">
-            ${[65, 66, 67, 68, 69, 70, 71, 72].map(temp => `
-              <button class="temp-button ${Math.abs(this._zone2Target - temp) < 0.1 ? 'active' : ''}" 
+            ${[64, 64.5, 65, 65.5, 66, 66.5, 67, 67.5, 68, 68.5, 69, 69.5, 70, 70.5, 71, 71.5, 72, 72.5, 73].map(temp => `
+              <button class="temp-button ${Math.abs(this._zone2Target - temp) < 0.1 ? 'active' : ''}"
                       data-zone="2" data-temp="${temp}">
-                ${temp}°F
+                ${temp % 1 === 0 ? temp + '°' : temp.toFixed(1) + '°'}
               </button>
             `).join('')}
           </div>
@@ -467,40 +401,7 @@ class DualZoneHVACCard extends HTMLElement {
   }
 
   _attachEventListeners() {
-    const zone1Slider = this.shadowRoot.getElementById('zone1-slider');
-    const zone2Slider = this.shadowRoot.getElementById('zone2-slider');
-    
-    if (zone1Slider) {
-      zone1Slider.addEventListener('input', (e) => {
-        this._zone1Target = parseFloat(e.target.value);
-        this._updateCard();
-      });
-      
-      zone1Slider.addEventListener('change', (e) => {
-        this._zone1Target = parseFloat(e.target.value);
-        this._callService('set_target_temperature', {
-          zone: 'zone1',
-          temperature: this._zone1Target
-        });
-      });
-    }
-
-    if (zone2Slider) {
-      zone2Slider.addEventListener('input', (e) => {
-        this._zone2Target = parseFloat(e.target.value);
-        this._updateCard();
-      });
-      
-      zone2Slider.addEventListener('change', (e) => {
-        this._zone2Target = parseFloat(e.target.value);
-        this._callService('set_target_temperature', {
-          zone: 'zone2',
-          temperature: this._zone2Target
-        });
-      });
-    }
-
-    // Quick temp buttons
+    // Temperature buttons
     this.shadowRoot.querySelectorAll('.temp-button').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
