@@ -15,6 +15,20 @@
  *    zone2_target: 68
  */
 
+// Temperature range configuration
+const TEMP_MIN = 66;
+const TEMP_MAX = 72;
+const TEMP_STEP = 1;
+
+// Generate temperature array based on configuration
+function generateTempRange() {
+  const temps = [];
+  for (let temp = TEMP_MIN; temp <= TEMP_MAX; temp += TEMP_STEP) {
+    temps.push(temp);
+  }
+  return temps;
+}
+
 class DualZoneHVACCard extends HTMLElement {
   constructor() {
     super();
@@ -333,10 +347,10 @@ class DualZoneHVACCard extends HTMLElement {
           </div>
 
           <div class="quick-temps">
-            ${[64, 64.5, 65, 65.5, 66, 66.5, 67, 67.5, 68, 68.5, 69, 69.5, 70, 70.5, 71, 71.5, 72, 72.5, 73].map(temp => `
+            ${generateTempRange().map(temp => `
               <button class="temp-button ${Math.abs(this._zone1Target - temp) < 0.1 ? 'active' : ''}"
                       data-zone="1" data-temp="${temp}">
-                ${temp % 1 === 0 ? temp + '°' : temp.toFixed(1) + '°'}
+                ${temp}°F
               </button>
             `).join('')}
           </div>
@@ -369,10 +383,10 @@ class DualZoneHVACCard extends HTMLElement {
           </div>
 
           <div class="quick-temps">
-            ${[64, 64.5, 65, 65.5, 66, 66.5, 67, 67.5, 68, 68.5, 69, 69.5, 70, 70.5, 71, 71.5, 72, 72.5, 73].map(temp => `
+            ${generateTempRange().map(temp => `
               <button class="temp-button ${Math.abs(this._zone2Target - temp) < 0.1 ? 'active' : ''}"
                       data-zone="2" data-temp="${temp}">
-                ${temp % 1 === 0 ? temp + '°' : temp.toFixed(1) + '°'}
+                ${temp}°F
               </button>
             `).join('')}
           </div>
